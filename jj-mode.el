@@ -164,6 +164,7 @@ The function must accept one argument: the buffer to display."
 
     ;; Experimental
     (define-key map (kbd "D") 'jj-diff)
+    (define-key map (kbd "R") 'jj-diff-emacs)
     (define-key map (kbd "E") 'jj-diffedit-emacs)
     (define-key map (kbd "M") 'jj-diffedit-smerge)
     (define-key map (kbd "?") 'jj-mode-transient)
@@ -192,6 +193,7 @@ The function must accept one argument: the buffer to display."
                  ("G" "Git operations" jj-git-transient)]
                 ["Experimental"
                  ("D" "Show diff" jj-diff)
+                 ("R" "Diff (ediff)" jj-diff-emacs)
                  ("E" "DiffEdit (ediff)" jj-diffedit-emacs)
                  ("M" "DiffEdit (smerge)" jj-diffedit-smerge)]
                 ["Exit"
@@ -964,63 +966,92 @@ Includes the host if REPO-ROOT is a TRAMP path."
       (xref-push-marker-stack)
       (find-file full-file-path))))
 
+(defun jj--get-current-file ()
+  "Return the current file."
+  (let* ((default-directory (jj--root))
+         (section (magit-current-section)))
+    (cond
+     ((and section (eq (oref section type) 'jj-file-section))
+      (oref section file))
+     ((and section (eq (oref section type) 'jj-hunk-section))
+      (oref section file))
+     (t nil))))
+
 (defun jj-diffedit-emacs ()
   "Emacs-based diffedit using built-in ediff."
   (interactive)
   (let* ((default-directory (jj--root))
-         (section (magit-current-section))
-         (file (cond
-                ((and section (eq (oref section type) 'jj-file-section))
-                 (oref section file))
-                ((and section (eq (oref section type) 'jj-hunk-section))
-                 (oref section file))
-                (t nil))))
+         (file (jj--get-current-file)))
     (if file
         (jj-diffedit-with-ediff file)
       (jj-diffedit-all))))
 
-(defun jj-diffedit-with-ediff (file)
-  "Open ediff session for a specific file against parent."
-  (let* ((repo-root (jj--root))
-         (full-file-path (expand-file-name file repo-root))
-         (file-ext (file-name-extension file))
-         (parent-temp-file (make-temp-file (format "jj-parent-%s" (file-name-nondirectory file))
-                                           nil (when file-ext (concat "." file-ext))))
-         (parent-content (let ((default-directory repo-root))
-                           (jj--run-command "file" "show" "-r" "@-" file))))
+(defun jj-diff-emacs ()
+  "Open diff in ediff."
+  (interactive)
+  (let* ((default-directory (jj--root))
+         (file (jj--get-current-file))
+         (revision (jj-get-changeset-at-point)))
+    (if file
+        (jj-diff-with-ediff file revision)
+      (jj-diff-all revision))))
+
+(defun jj--create-temp-file (file revision)
+  "Call `jj file show' for the given FILE and REVISION."
+  (let* ((file-ext (file-name-extension file))
+         (temp-file (make-temp-file
+                     (format "jj-tmp-%s" (file-name-nondirectory file))
+                     nil (when file-ext (concat "." file-ext))))
+         (content (let ((default-directory (jj--root)))
+                    (jj--run-command "file" "show" "-r" revision file))))
 
     ;; Write parent content to temp file
-    (with-temp-file parent-temp-file
-      (insert parent-content)
+    (with-temp-file temp-file
+      (insert content)
       ;; Enable proper major mode for syntax highlighting
       (when file-ext
         (let ((mode (assoc-default (concat "." file-ext) auto-mode-alist 'string-match)))
           (when mode
             (funcall mode)))))
+    temp-file))
 
-    ;; Start ediff session, pass in cleanup hook
-    (ediff-files parent-temp-file full-file-path
-                 (list (lambda ()
-                         (add-hook 'ediff-quit-hook
-                                   (lambda ()
-                                     (when-let ((buffer (get-file-buffer parent-temp-file)))
-                                       (kill-buffer buffer))
-                                     (when (file-exists-p parent-temp-file)
-                                       (delete-file parent-temp-file))
-                                     (jj-log-refresh))
-                                   nil t))))
+(defun jj--get-ediff-quit-hook (files)
+  "Return the `ediff-files' startup hooks necessary for cleanup of the given FILES."
+  (list
+   (lambda ()
+     (add-hook 'ediff-quit-hook
+               (lambda ()
+                 (mapc (lambda (file)
+                         (when-let ((buffer (get-file-buffer file)))
+                           (kill-buffer buffer))
+                         (when (file-exists-p file)
+                           (delete-file file)))
+                       files)
+                 (jj-log-refresh))
+               nil t))))
+
+(defun jj-diff-with-ediff (file revision)
+  "Open ediff session for a specific FILE against parent.
+
+If REVISION is not nil, open ediff session for given revision instead of
+parent."
+  (let* ((parent-revision (concat revision "-"))
+         (revision-temp-file (jj--create-temp-file file revision))
+         (parent-temp-file (jj--create-temp-file file parent-revision)))
+    (ediff-files parent-temp-file revision-temp-file (jj--get-ediff-quit-hook `(,parent-temp-file ,revision-temp-file)))
+    (message "Ediff: Left=%s, Right=%s." parent-revision revision)))
+
+(defun jj-diffedit-with-ediff (file)
+  "Open ediff session for a specific FILE against parent."
+  (let* ((full-file-path (expand-file-name file (jj--root)))
+         (parent-temp-file (jj--create-temp-file file "@-")))
+    (ediff-files parent-temp-file full-file-path (jj--get-ediff-quit-hook `(,parent-temp-file)))
     (message "Ediff: Left=Parent (@-), Right=Current (@). Edit right side, then 'q' to quit and save.")))
 
 (defun jj-diffedit-smerge ()
   "Emacs-based diffedit using smerge-mode (merge conflict style)."
   (interactive)
-  (let* ((section (magit-current-section))
-         (file (cond
-                ((and section (eq (oref section type) 'jj-file-section))
-                 (oref section file))
-                ((and section (eq (oref section type) 'jj-hunk-section))
-                 (oref section file))
-                (t nil))))
+  (let* ((file (jj--get-current-file)))
     (if file
         (jj-diffedit-with-smerge file)
       (jj-diffedit-all))))
@@ -1082,18 +1113,28 @@ Includes the host if REPO-ROOT is a TRAMP path."
         (jj-log-refresh)
         (message "Changes applied to %s" file)))))
 
+(defun jj--choose-file (revision)
+  "Prompt user to choose a file that has changed in given REVISION."
+  (let ((changed-files (jj--get-changed-files revision)))
+    (if (= (length changed-files) 1)
+        (car changed-files)
+      (completing-read "Edit file: " changed-files))))
+
+(defun jj-diff-all (revision)
+  "Choose file to open in ediff for given REVISION."
+  (let ((choice (jj--choose-file revision)))
+    (when choice
+      (jj-diff-with-ediff choice revision))))
+
 (defun jj-diffedit-all ()
   "Open diffedit interface for all changes."
-  (let* ((changed-files (jj--get-changed-files))
-         (choice (if (= (length changed-files) 1)
-                     (car changed-files)
-                   (completing-read "Edit file: " changed-files))))
+  (let ((choice (jj--choose-file "@")))
     (when choice
       (jj-diffedit-with-ediff choice))))
 
-(defun jj--get-changed-files ()
-  "Get list of files with changes in working copy."
-  (let ((diff-output (jj--run-command "diff" "--name-only")))
+(defun jj--get-changed-files (revision)
+  "Get list of files with changes in given REVISION."
+  (let ((diff-output (jj--run-command "diff" "--name-only" (concat "-r " revision))))
     (split-string diff-output "\n" t)))
 
 (defun jj-edit-changeset ()
