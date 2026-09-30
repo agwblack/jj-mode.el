@@ -1154,7 +1154,7 @@ parent."
 (defvar-local jj-squash-into nil
   "Currently selected 'into' commit for squash.")
 
-(defvar-local jj-squash-from-overlay nil
+(defvar-local jj-squash-from-overlays nil
   "Overlay for highlighting the selected 'from' commit.")
 
 (defvar-local jj-squash-into-overlay nil
@@ -1177,36 +1177,52 @@ parent."
     (delete-overlay child-overlay))
   (delete-overlay overlay))
 
+(defun jj--delete-overlays (overlays)
+  "Deletes all the given OVERLAYS."
+  (mapc #'jj--delete-overlay overlays))
+
 ;;;###autoload
 (defun jj-squash-clear-selections ()
   "Clear all squash selections and overlays."
   (interactive)
   (setq jj-squash-from nil
         jj-squash-into nil)
-  (when jj-squash-from-overlay
-    (jj--delete-overlay jj-squash-from-overlay)
-    (setq jj-squash-from-overlay nil))
+  (jj--delete-overlays jj-squash-from-overlays)
+  (setq jj-squash-from-overlays nil)
   (when jj-squash-into-overlay
     (jj--delete-overlay jj-squash-into-overlay)
     (setq jj-squash-into-overlay nil))
   (message "Cleared all squash selections"))
 
+(defun jj--calculate-change-id-from-sections (sections)
+  "Calculate the change ID from the given magit SECTIONS.
+
+Returns a revset range in the form `oldest::newest'"
+  (cond ((null sections) (error "No changes selected"))
+        ((= 1 (length sections)) (jj--get-changeset-of-section (car sections)))
+        (t (let ((first-id (jj--get-changeset-of-section (car sections)))
+                 (last-id (jj--get-changeset-of-section (car (last sections)))))
+             (substring-no-properties (concat last-id "::" first-id))))))
+
 ;;;###autoload
 (defun jj-squash-set-from ()
   "Set the commit at point as squash `from' source."
   (interactive)
-  (when-let ((change-id (jj-get-changeset-at-point))
-             (section (magit-current-section)))
+  (when-let* ((sections (or (magit-region-sections)
+                            (list (magit-current-section))))
+              (change-id (jj--calculate-change-id-from-sections sections)))
     ;; Clear previous from overlay
-    (when jj-squash-from-overlay
-      (jj--delete-overlay jj-squash-from-overlay))
+    (jj--delete-overlays jj-squash-from-overlays)
     ;; Set new from
     (setq jj-squash-from change-id)
     ;; Create overlay for visual indication
-    (setq jj-squash-from-overlay
-          (jj--make-commit-overlay
-           section " [FROM] "
-           '(:background "dark orange" :foreground "white" :extend t)))
+    (setq jj-squash-from-overlays
+          (mapcar (lambda (section)
+                    (jj--make-commit-overlay
+                     section
+                     " [FROM] "
+                     '(:background "dark orange" :foreground "white" :extend t)))
+                  sections))
     (message "Set from: %s" change-id)))
 
 ;;;###autoload
@@ -2032,16 +2048,22 @@ Tries `jj git remote list' first, then falls back to `git remote'."
       (goto-char pos)
       (message "No more changesets"))))
 
+(defun jj--get-changeset-of-section (section)
+  "Get the changeset ID of the given magit-section SECTION."
+  (let ((id-type (if (transient-arg-value "--use-commit-id" (transient-args 'jj-mode-transient))
+                     'commit-id
+                   'change-id)))
+    (cond
+     ((and (slot-exists-p section id-type)
+           (slot-boundp section id-type)
+           (memq (oref section type) '(jj-log-entry-section jj-commit-section)))
+      (slot-value section id-type))
+     (t nil))))
+
 (defun jj-get-changeset-at-point ()
   "Get the changeset ID at point."
-  (let ((id-type (if (transient-arg-value "--use-commit-id" (transient-args 'jj-mode-transient)) 'commit-id 'change-id)))
-    (when-let ((section (magit-current-section)))
-      (cond
-       ((and (slot-exists-p section id-type)
-             (slot-boundp section id-type)
-             (memq (oref section type) '(jj-log-entry-section jj-commit-section)))
-        (slot-value section id-type))
-       (t nil)))))
+  (when-let ((section (magit-current-section)))
+    (jj--get-changeset-of-section section)))
 
 ;; Rebase state management
 (defvar-local jj-rebase-source nil
