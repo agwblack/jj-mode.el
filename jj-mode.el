@@ -2230,7 +2230,9 @@ Tries `jj git remote list' first, then falls back to `git remote'."
   "Transient for jj git push."
   [:class transient-columns
           ["Arguments"
-           ("-R" "Remote" "--remote=" :choices jj--get-git-remotes)
+           ;; TODO(ablack): add :init-value which will let us provide initial values to these
+           ;; TODO(ablack): doesn't appear to work
+           ("-R" "Remote" "--remote=" :choices jj--get-git-remotes :init-value (lambda (_obj) "mooster"))
            ("-b" "Bookmark" "--bookmark=" :choices jj--get-bookmark-names)
            ("-a" "All bookmarks" "--all")
            ("-t" "Tracked only" "--tracked")
