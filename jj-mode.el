@@ -1990,7 +1990,8 @@ Tries `jj git remote list' first, then falls back to `git remote'."
 (defun jj-diff ()
   "Show diff for current change or commit at point."
   (interactive)
-  (let* ((change-id (jj-get-changeset-at-point))
+  (let* ((sections (or (magit-region-sections) (list (magit-current-section))))
+         (change-id (jj--calculate-change-id-from-sections sections))
          (repo-root jj--repo-root)
          (buffer (get-buffer-create "*jj-diff*"))
          (prev-buffer (current-buffer)))
@@ -2000,23 +2001,19 @@ Tries `jj git remote list' first, then falls back to `git remote'."
         (setq default-directory repo-root)
         (let ((inhibit-read-only t))
           (erase-buffer)
-          (if change-id
-              (insert (jj--run-command-color "show" "-r" change-id))
-            (insert (jj--run-command-color "show")))
+          (insert (jj--run-command-color "diff" "-r" change-id))
           ;; This is a little silly: remove all ansi-colors after the changeset header
           ;; `jj--run-command-color` worked so hard to add them...
-          (goto-char (point-min))
-          (when (re-search-forward "^diff --git" nil t)
-            (beginning-of-line)
-            (remove-text-properties (point) (point-max) '(font-lock-face face))
-            ;; jj show outputs spaces on some empty lines; Remove them so they are not
-            ;; highlighted when `show-trailing-whitespace' is true
-            (replace-regexp "^ $" "" nil (point) (point-max)))
+          ;; (goto-char (point-min))
+          ;; (when (re-search-forward "^diff --git" nil t)
+          ;;   (beginning-of-line)
+          ;;   (remove-text-properties (point) (point-max) '(font-lock-face face))
+          ;;   ;; jj show outputs spaces on some empty lines; Remove them so they are not
+          ;;   ;; highlighted when `show-trailing-whitespace' is true
+          ;;   (replace-regexp "^ $" "" nil (point) (point-max)))
           (diff-mode)
           (goto-char (point-min))
-          ;; Make buffer read-only
           (setq buffer-read-only t)
-          ;; Set up local keymap
           (use-local-map (copy-keymap diff-mode-map))
           (local-set-key (kbd "q")
                          (lambda ()
