@@ -149,6 +149,7 @@ The function must accept one argument: the buffer to display."
     (define-key map (kbd "c") 'jj-commit)
     (define-key map (kbd "e") 'jj-edit-changeset)
     (define-key map (kbd "u") 'jj-undo)
+    (define-key map (kbd "y") 'jj-redo)
     (define-key map (kbd "N") 'jj-new-transient)
     (define-key map (kbd "s") 'jj-squash-transient)
     (define-key map (kbd "S") 'jj-squash-into-parent)
@@ -182,6 +183,7 @@ The function must accept one argument: the buffer to display."
                  ("c" "Commit" jj-commit)
                  ("e" "Edit changeset" jj-edit-changeset)
                  ("u" "Undo last change" jj-undo)
+                 ("y" "Redo last change" jj-redo)
                  ("N" "New changeset" jj-new)
                  ("a" "Abandon changeset" jj-abandon)
                  ("d" "Describe changeset" jj-describe)
@@ -1633,6 +1635,16 @@ ARGS can be transient related infix, for example
            (list "undo") result
            "Undid last change"
            "Undo failed")
+      (jj-log-refresh))))
+
+(defun jj-redo ()
+  "Undo the last undo."
+  (interactive)
+  (let ((result (jj--run-command "redo")))
+    (when (jj--handle-command-result
+           (list "redo") result
+           "Redid last change"
+           "Redo failed")
       (jj-log-refresh))))
 
 (defun jj-abandon ()
