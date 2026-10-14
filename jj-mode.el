@@ -2024,7 +2024,10 @@ Tries `jj git remote list' first, then falls back to `git remote'."
                            (kill-buffer)
                            (when (buffer-live-p prev-buffer)
                              (switch-to-buffer prev-buffer)))))))
-    (switch-to-buffer buffer)))
+    (pop-to-buffer buffer
+                   '((display-buffer-reuse-window
+                      display-buffer-pop-up-window)
+                     (inhibit-same-window . t)))))
 
 ;;;###autoload
 (defun jj-goto-next-changeset ()
